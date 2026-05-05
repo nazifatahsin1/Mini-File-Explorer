@@ -38,7 +38,6 @@ FONT_LG   = ("Helvetica Neue", 15, "bold")
 FONT_XS   = ("Helvetica Neue", 10)
 ROW_H     = 32
 
-# ── file type → accent color ──────────────────────
 EXT_COLORS = {
     ".py":    C["yellow"],  ".js":  C["yellow"],  ".ts":   C["yellow"],
     ".sh":    C["yellow"],  ".bash":C["yellow"],
@@ -150,7 +149,7 @@ class Finder:
         self._entries    = []
         self._sel        = -1
         self._hov        = -1
-        self._clip       = None
+        self._clip       = None   # (src_path, "copy"|"cut")
         self.sort_col    = "name"
         self.sort_rev    = False
         self.show_hidden = False
@@ -172,7 +171,6 @@ class Finder:
         tb.pack(side=tk.TOP, fill=tk.X)
         tb.pack_propagate(False)
 
-        # decorative traffic lights
         lights = tk.Frame(tb, bg=C["mantle"])
         lights.pack(side=tk.LEFT, padx=14, pady=16)
         for col in [C["red"], C["yellow"], C["green"]]:
@@ -181,14 +179,12 @@ class Finder:
             cv.pack(side=tk.LEFT, padx=3)
             cv.create_oval(1, 1, 12, 12, fill=col, outline="")
 
-        # nav buttons
         nav = tk.Frame(tb, bg=C["mantle"])
         nav.pack(side=tk.LEFT, padx=4)
         self._tbtn(nav, "‹", self.go_back, "Back").pack(side=tk.LEFT, padx=2)
         self._tbtn(nav, "›", self.go_fwd,  "Forward").pack(side=tk.LEFT, padx=2)
         self._tbtn(nav, "↑", self.go_up,   "Parent folder").pack(side=tk.LEFT, padx=2)
 
-        # path entry
         path_wrap = tk.Frame(tb, bg=C["surface0"],
                              highlightbackground=C["surface1"], highlightthickness=1)
         path_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, pady=12, ipady=2)
@@ -203,7 +199,6 @@ class Finder:
         pe.bind("<FocusIn>",  lambda _: path_wrap.config(highlightbackground=C["blue"]))
         pe.bind("<FocusOut>", lambda _: path_wrap.config(highlightbackground=C["surface1"]))
 
-        # search entry
         srch_wrap = tk.Frame(tb, bg=C["surface0"],
                              highlightbackground=C["surface1"], highlightthickness=1)
         srch_wrap.pack(side=tk.LEFT, padx=(0, 8), pady=12, ipady=2)
@@ -220,7 +215,6 @@ class Finder:
         se.bind("<FocusIn>",  lambda _: srch_wrap.config(highlightbackground=C["blue"]))
         se.bind("<FocusOut>", lambda _: srch_wrap.config(highlightbackground=C["surface1"]))
 
-        # hidden toggle
         self._tbtn(tb, "👁", self._toggle_hidden, "Toggle hidden files").pack(
             side=tk.LEFT, padx=(0, 10))
 
@@ -228,17 +222,14 @@ class Finder:
         body = tk.Frame(self.root, bg=C["base"])
         body.pack(fill=tk.BOTH, expand=True)
 
-        # sidebar
         self._build_sidebar(body)
         tk.Frame(body, bg=C["surface0"], width=1).pack(side=tk.LEFT, fill=tk.Y)
 
-        # center (header + list)
         center = tk.Frame(body, bg=C["base"])
         center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._build_col_header(center)
         self._build_filelist(center)
 
-        # preview panel
         tk.Frame(body, bg=C["surface0"], width=1).pack(side=tk.LEFT, fill=tk.Y)
         self._build_preview(body)
 
@@ -316,7 +307,8 @@ class Finder:
         self.cv.bind("<Leave>",            self._on_leave)
         self.cv.bind("<MouseWheel>",       self._on_scroll)
         self.cv.bind("<Key>",              self._on_key)
-        self.cv.bind("<ButtonPress-1>",    lambda e: self.cv.focus_set())
+        # Use after() so focus_set doesn't race with _on_click and steal the event
+        self.cv.bind("<ButtonPress-1>",    lambda e: self.root.after(1, self.cv.focus_set))
 
     def _build_preview(self, parent):
         pf = tk.Frame(parent, bg=C["mantle"], width=240)
@@ -500,14 +492,24 @@ class Finder:
                 })
             except: pass
 
-        entries.sort(key=lambda e: (
-            not e["is_dir"],
-            e[self.sort_col].lower() if isinstance(e[self.sort_col], str)
-            else e[self.sort_col]
-        ), reverse=self.sort_rev)
+        # ── SORT FIX ─────────────────────────────────
+        # Sort dirs and files independently so folders are ALWAYS on top,
+        # regardless of column or direction.
+        def entry_key(e):
+            v = e[self.sort_col]
+            return v.lower() if isinstance(v, str) else v
+
+        dirs  = sorted([e for e in entries if     e["is_dir"]], key=entry_key, reverse=self.sort_rev)
+        files = sorted([e for e in entries if not e["is_dir"]], key=entry_key, reverse=self.sort_rev)
+        entries = dirs + files
+        # ─────────────────────────────────────────────
 
         self._entries = entries
-        self._sel = min(self._sel, len(entries) - 1)
+
+        # Clamp selection to valid range after the list may have shrunk
+        if self._sel >= len(entries):
+            self._sel = len(entries) - 1
+
         self._draw()
         self._update_preview()
 
@@ -535,17 +537,15 @@ class Finder:
 
             cv.create_rectangle(0, y, W, y + ROW_H, fill=bg, outline="")
 
-            fg     = C["crust"]   if i == self._sel else C["text"]
+            fg     = C["crust"]    if i == self._sel else C["text"]
             fg_dim = C["surface1"] if i == self._sel else C["overlay0"]
 
             icon, icolor = get_icon(e["name"], e["is_dir"])
             ic = C["crust"] if i == self._sel else icolor
 
-            # icon
             cv.create_text(22, y + ROW_H // 2, text=icon,
                            font=("Helvetica", 17), fill=ic, anchor="center")
 
-            # colored dot for file type (only for files, not selected)
             if not e["is_dir"] and i != self._sel:
                 cv.create_oval(34, y + ROW_H // 2 - 3,
                                39, y + ROW_H // 2 + 3,
@@ -554,16 +554,13 @@ class Finder:
                                    C["overlay1"]),
                                outline="")
 
-            # name
             cv.create_text(48, y + ROW_H // 2, text=e["name"],
                            anchor="w", font=FONT_UI, fill=fg)
 
-            # size
             size_t = "—" if e["is_dir"] else human_size(e["size"])
             cv.create_text(490, y + ROW_H // 2, text=size_t,
                            anchor="w", font=FONT_SM, fill=fg_dim)
 
-            # type badge
             pill_x = 590
             pill_w = max(len(e["type"]) * 7 + 14, 44)
             pill_bg = C["surface1"] if i != self._sel else C["sapphire"]
@@ -574,11 +571,9 @@ class Finder:
                            text=e["type"], font=FONT_XS,
                            fill=C["text"] if i != self._sel else C["crust"])
 
-            # modified
             cv.create_text(720, y + ROW_H // 2, text=time_ago(e["modified"]),
                            anchor="w", font=FONT_SM, fill=fg_dim)
 
-            # row separator
             if i != self._sel and i != self._hov:
                 cv.create_line(48, y + ROW_H - 1, W, y + ROW_H - 1,
                                fill=C["surface0"])
@@ -590,12 +585,16 @@ class Finder:
         H = max(len(self._entries) * ROW_H + 40, cv.winfo_height())
         cv.config(scrollregion=(0, 0, W, H))
 
+    # ── PREVIEW FIX ──────────────────────────────────────────────────────────
+    # Always reads self._sel fresh from self._entries.
+    # Called after every selection change and after every _render().
     def _update_preview(self):
         if self._sel < 0 or self._sel >= len(self._entries):
             self.prev_icon.config(text="")
             self.prev_name.config(text="Select a file")
             self.prev_kind.config(text="")
-            for v in self._meta_vals.values(): v.config(text="")
+            for v in self._meta_vals.values():
+                v.config(text="")
             return
 
         e = self._entries[self._sel]
@@ -610,57 +609,92 @@ class Finder:
         self._meta_vals["Created"].config(
             text=datetime.fromtimestamp(e["created"]).strftime("%d %b %Y"))
         self._meta_vals["Permissions"].config(text=e["perms"])
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _sort(self, col):
-        self.sort_rev = (not self.sort_rev) if self.sort_col == col else False
-        self.sort_col = col
+        # Remember selected file by name so highlight survives the re-sort
+        sel_name = (self._entries[self._sel]["name"]
+                    if 0 <= self._sel < len(self._entries) else None)
+
+        if self.sort_col == col:
+            self.sort_rev = not self.sort_rev
+        else:
+            self.sort_col = col
+            self.sort_rev = False
+
         self._render()
+
+        # Restore selection to the same file in its new position
+        if sel_name:
+            for i, e in enumerate(self._entries):
+                if e["name"] == sel_name:
+                    self._sel = i
+                    break
+            self._draw()
+            self._update_preview()
 
     # ── EVENTS ───────────────────────────────────────
 
     def _row_at(self, y):
-        i = int(self.cv.canvasy(y) // ROW_H)
+        cy = self.cv.canvasy(y)          # convert widget-y → canvas-y (accounts for scroll)
+        i  = int(cy // ROW_H)
         return i if 0 <= i < len(self._entries) else -1
 
     def _on_resize(self, _): self._draw()
 
     def _on_motion(self, e):
         i = self._row_at(e.y)
-        if i != self._hov: self._hov = i; self._draw()
+        if i != self._hov:
+            self._hov = i
+            self._draw()
 
     def _on_leave(self, _):
-        self._hov = -1; self._draw()
+        self._hov = -1
+        self._draw()
 
     def _on_scroll(self, e):
         self.cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
     def _on_click(self, e):
-        self._sel = self._row_at(e.y)
-        self._draw(); self._update_preview()
+        i = self._row_at(e.y)
+        self._sel = i                    # -1 if blank area → clears selection
+        self._draw()
+        self._update_preview()
 
     def _on_double(self, e):
         i = self._row_at(e.y)
         if i < 0: return
         ent = self._entries[i]
-        self.goto(ent["full"]) if ent["is_dir"] else subprocess.Popen(["open", ent["full"]])
+        if ent["is_dir"]:
+            self.goto(ent["full"])
+        else:
+            subprocess.Popen(["open", ent["full"]])
 
     def _on_rclick(self, e):
         i = self._row_at(e.y)
         if i >= 0:
-            self._sel = i; self._draw(); self._update_preview()
+            self._sel = i
+            self._draw()
+            self._update_preview()
             self.menu.tk_popup(e.x_root, e.y_root)
 
     def _on_key(self, e):
+        if not self._entries:
+            return
         if e.keysym == "Up":
             self._sel = max(0, self._sel - 1)
         elif e.keysym == "Down":
             self._sel = min(len(self._entries) - 1, self._sel + 1)
         elif e.keysym == "Return" and self._sel >= 0:
             ent = self._entries[self._sel]
-            self.goto(ent["full"]) if ent["is_dir"] else subprocess.Popen(["open", ent["full"]])
+            if ent["is_dir"]:
+                self.goto(ent["full"])
+            else:
+                subprocess.Popen(["open", ent["full"]])
         elif e.keysym == "BackSpace":
             self.go_up()
-        self._draw(); self._update_preview()
+        self._draw()
+        self._update_preview()
 
     def _sel_path(self):
         if 0 <= self._sel < len(self._entries):
@@ -676,7 +710,9 @@ class Finder:
 
     def m_open(self):
         p = self._sel_path()
-        if p: self.goto(p) if os.path.isdir(p) else subprocess.Popen(["open", p])
+        if p:
+            if os.path.isdir(p): self.goto(p)
+            else: subprocess.Popen(["open", p])
 
     def m_terminal(self):
         p = self._sel_path() or self.path
@@ -693,7 +729,9 @@ class Finder:
         new = simpledialog.askstring("Rename", "New name:",
                                      initialvalue=os.path.basename(p), parent=self.root)
         if new:
-            try: os.rename(p, os.path.join(os.path.dirname(p), new)); self._render()
+            try:
+                os.rename(p, os.path.join(os.path.dirname(p), new))
+                self._render()
             except Exception as ex: messagebox.showerror("Error", str(ex))
 
     def m_duplicate(self):
@@ -706,25 +744,55 @@ class Finder:
             self._render()
         except Exception as ex: messagebox.showerror("Error", str(ex))
 
+    # ── COPY / CUT / PASTE FIX ───────────────────────────────────────────────
     def m_copy(self):
         p = self._sel_path()
-        if p: self._clip = (p, "copy"); self.status_var.set(f"Copied: {os.path.basename(p)}")
+        if p:
+            self._clip = (p, "copy")
+            self.status_var.set(f"Copied:  {os.path.basename(p)}")
 
     def m_cut(self):
         p = self._sel_path()
-        if p: self._clip = (p, "cut"); self.status_var.set(f"Cut: {os.path.basename(p)}")
+        if p:
+            self._clip = (p, "cut")
+            self.status_var.set(f"Cut:  {os.path.basename(p)}")
 
     def m_paste(self):
-        if not self._clip: return
+        if not self._clip:
+            self.status_var.set("Clipboard is empty")
+            return
+
         src, op = self._clip
-        dst = os.path.join(self.path, os.path.basename(src))
+
+        if not os.path.exists(src):
+            messagebox.showerror("Paste", f"Source no longer exists:\n{src}")
+            self._clip = None
+            return
+
+        # Build a non-colliding destination path
+        base      = os.path.basename(src)
+        name, ext = os.path.splitext(base)
+        dst       = os.path.join(self.path, base)
+        counter   = 1
+        while os.path.exists(dst):
+            dst = os.path.join(self.path, f"{name} {counter}{ext}")
+            counter += 1
+
         try:
             if op == "copy":
-                shutil.copytree(src, dst) if os.path.isdir(src) else shutil.copy2(src, dst)
-            else:
-                shutil.move(src, dst); self._clip = None
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+            else:                              # cut → move; clear clipboard afterwards
+                shutil.move(src, dst)
+                self._clip = None
+
+            self.status_var.set(f"Pasted:  {os.path.basename(dst)}")
             self._render()
-        except Exception as ex: messagebox.showerror("Error", str(ex))
+        except Exception as ex:
+            messagebox.showerror("Paste Error", str(ex))
+    # ─────────────────────────────────────────────────────────────────────────
 
     def m_info(self):
         e = self._sel_entry()
@@ -754,13 +822,17 @@ class Finder:
     def new_folder(self):
         n = simpledialog.askstring("New Folder", "Folder name:", parent=self.root)
         if n:
-            try: os.makedirs(os.path.join(self.path, n), exist_ok=True); self._render()
+            try:
+                os.makedirs(os.path.join(self.path, n), exist_ok=True)
+                self._render()
             except Exception as ex: messagebox.showerror("Error", str(ex))
 
     def new_file(self):
         n = simpledialog.askstring("New File", "File name:", parent=self.root)
         if n:
-            try: open(os.path.join(self.path, n), "w").close(); self._render()
+            try:
+                open(os.path.join(self.path, n), "w").close()
+                self._render()
             except Exception as ex: messagebox.showerror("Error", str(ex))
 
 
